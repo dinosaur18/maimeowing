@@ -48,7 +48,7 @@ def main():
         data_files=data_args.train_files,
         streaming=data_args.streaming,
         split="train"
-    ).shuffle(seed=training_args.data_seed, buffer_size=50000)
+    )
     
     model = AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,

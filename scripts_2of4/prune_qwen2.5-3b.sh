@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=4,5
+export CUDA_VISIBLE_DEVICES=4,5,6,7
 
 IFS=',' read -r -a GPU_ARRAY <<< "$CUDA_VISIBLE_DEVICES"
 NPROC=${#GPU_ARRAY[@]}
@@ -13,7 +13,7 @@ accelerate launch \
     --dtype bfloat16 \
     --attn_implementation flash_attention_2 \
     --dataset_name parquet \
-    --train_files "/llm-data/other/data/for_susi/*.parquet" \
+    --train_files "/llm-data/other/data/for_susi_v2_enumerated/*.parquet" \
     --streaming true \
     --optim adamw_8bit \
     --learning_rate 1e-3 \

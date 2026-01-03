@@ -3,29 +3,15 @@ import torch.nn.functional as F
 from trl import SFTTrainer
 
 
-def compute_per_example_losses(per_token_losses, position_ids):
-    # currrently support only flash attention
-
+def compute_batch_robustness_loss(per_token_losses, num_tokens):
+    # per_token_losses: (batch_size * seq_len,)
+    # take randomly num_tokens losses and minimize their pairwise differences on average
     flat_losses = per_token_losses.view(-1)
-    flat_pos = position_ids.view(-1)
-
-    is_start = (flat_pos == 0).long()
-    seq_ids = is_start.cumsum(dim=0) - 1
-    num_examples = seq_ids[-1].item() + 1
-    
-    example_loss_sums = torch.zeros(
-        num_examples, 
-        device=flat_losses.device, 
-        dtype=flat_losses.dtype
-    )
-    
-    example_loss_sums.scatter_add_(0, seq_ids, flat_losses)
-    
-    token_counts = torch.bincount(seq_ids, minlength=num_examples).float()
-    token_counts = token_counts.clamp(min=1.0)
-    
-    per_example_means = example_loss_sums / token_counts
-    return per_example_means
+    sampled_losses = flat_losses[torch.randperm(flat_losses.size(0))[:num_tokens]]
+    loss_diff = (sampled_losses.unsqueeze(-1) - sampled_losses).abs()
+    loss_diff_unique = torch.triu(loss_diff, diagonal=1)
+    br_loss = loss_diff_unique[loss_diff_unique != 0].mean()
+    return br_loss
 
 
 class BaRoSFTTrainer(SFTTrainer):
@@ -47,26 +33,12 @@ class BaRoSFTTrainer(SFTTrainer):
         labels = F.pad(labels, (0, 1), value=-100)
         shift_labels = labels[..., 1:].view(-1)
         per_token_losses = F.cross_entropy(logits, shift_labels, reduction="none")
-        per_example_losses = compute_per_example_losses(
-            per_token_losses, 
-            inputs["position_ids"]
-        )
         
         base_loss = per_token_losses.mean()
-
-        # compute batch-robustness regularization
-        loss_diff = (per_example_losses.unsqueeze(-1) - per_example_losses).abs()
-        loss_diff_unique = torch.triu(loss_diff, diagonal=1)
-        reg = loss_diff_unique[loss_diff_unique != 0].mean()
+        reg = compute_batch_robustness_loss(per_token_losses, num_tokens=16384)  # TODO: make num_tokens a parameter
 
         total_loss = base_loss + self.lambda_reg * reg
-
-        print("\n"*4, loss_diff_unique)
-        print(per_token_losses.shape)
-        print(per_example_losses.shape)
-        print("\n"*4, loss_diff_unique[loss_diff_unique != 0], "\n"*4)
-        exit()
-
+        
         if num_items_in_batch is not None:
             total_loss = total_loss / self.args.gradient_accumulation_steps
         
